@@ -1,0 +1,11 @@
+{
+  "background_color": "#FFF",
+  "display": "standalone",
+  "name": "AutoCell",
+  "short_name": "AutoCell",
+  "version": "com.thomaskaldahl.autocell",
+  "description": "A simple Cellular Automata mobile app.",
+  "author": "Thomas Kaldahl",
+  "icons": [],
+  "start_url": "index.html"
+}

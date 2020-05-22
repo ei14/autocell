@@ -1,29 +1,98 @@
-class Trans {
-	constructor(inf) {
-		this.loc = {x: 0, y: 0}
-		this.rloc = {x: 0, y: 0}
-		this.inf = inf
+const gpu = new GPU({mode: 'dev'});
+//const gpu = new GPU();
 
-		this.zoom = 0
-		this.rzoom = 0
+const matAdd = gpu.createKernel(function(a, b) {
+	return a[this.thread.y][this.thread.x] + b[this.thread.y][this.thread.x]
+}, {output: [3, 3]})
+const matSca = gpu.createKernel(function(s, m) {
+	return s * m[this.thread.y][this.thread.x]
+}, {output: [3, 3]})
+const matMul = gpu.createKernel(function(a, b) {
+	let res = 0
+	for(let i = 0; i < 3; i++) {
+		res += a[this.thread.y][i] * b[i][this.thread.x]
+	}
+	return res
+}, {output: [3, 3]})
+const matDet = gpu.createKernel(function(m) {
+	return m[0][this.thread.x] * (
+		m[1][(this.thread.x+1)%3]*m[2][(this.thread.x+2)%3] -
+		m[1][(this.thread.x+2)%3]*m[2][(this.thread.x+1)%3]
+	)
+}, {output: [3]})
+const matInv = gpu.createKernel(function(m) {
+	return m[(this.thread.x + 1) % 3][(this.thread.y + 1) % 3] *
+		m[(this.thread.x + 2) % 3][(this.thread.y + 2) % 3] -
+		m[(this.thread.x + 1) % 3][(this.thread.y + 2) % 3] *
+		m[(this.thread.x + 2) % 3][(this.thread.y + 1) % 3]
+}, {output: [3, 3]})
+const matVec = gpu.createKernel(function(m, v) {
+	let res = 0
+	for(let i = 0; i < 3; i++) {
+		res += m[this.thread.x][i] * v[i]
+	}
+	return res
+}, {output: [3]})
+const vecSqu = gpu.createKernel(function(v) {
+	return a[this.thread.x] * a[this.thread.x]
+}, {output: [3]})
+const vecAdd = gpu.createKernel(function(a, b) {
+	return a[this.thread.x] + b[this.thread.x]
+}, {output: [3]})
+const vecSca = gpu.createKernel(function(v, s) {
+	return s * v[this.thread.x]
+}, {output: [3]})
 
-		this.stationary = true
+class Matrix {
+	constructor(values) {
+		if(values === undefined) this.mat = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+		else this.mat = values
 	}
 
-	update() {
-		this.loc.x += this.inf * (this.rloc.x - this.loc.x)
-		this.loc.y += this.inf * (this.rloc.y - this.loc.y)
-		this.zoom += this.inf * (this.rzoom - this.zoom)
+	plus(other) {
+		return new Matrix(matAdd(this.mat, other.mat))
+	}
+	times(other) {
+		if(other instanceof Matrix) {
+			return new Matrix(matMul(this.mat, other.mat))
+		}
+		if(other instanceof Vector) {
+			return new Vector(matVec(this.mat, other.vec))
+		}
+		return new Matrix(matSca(other, this.mat))
+	}
+	det() {
+		return matDet(this.mat).reduce((a, b) => a + b)
+	}
+	inv() {
+		return (new Matrix(matInv(this.mat))).times(1.0/this.det())
 	}
 
-	mapx(x) {
-		return Math.exp(this.zoom)*x - this.loc.x
+	static translation(vector) {
+		return new Matrix([[1, 0, vector.x()], [0, 1, vector.y()], [0, 0, 1]])
 	}
-	mapy(y) {
-		return Math.exp(this.zoom)*y - this.loc.y
+	static scale(scalar) {
+		return new Matrix([[scalar, 0, 0], [0, scalar, 0], [0, 0, 1]])
 	}
-	mapz(z) {
-		return Math.exp(this.zoom)*z
+}
+class Vector {
+	constructor(values) {
+		if(values === undefined) this.vec = [0, 0, 0]
+		else this.vec = values
+	}
+
+	x() {return 1.0 * this.vec[0]}
+	y() {return 1.0 * this.vec[1]}
+	z() {return 1.0 * this.vec[2]}
+
+	mag() {
+		return Math.sqrt(vecSqu(this.vec).reduce((a, b) => a + b))
+	}
+	plus(other) {
+		return new Vector(vecAdd(this.vec, other.vec))
+	}
+	times(scalar) {
+		return new Vector(vecSca(this.vec, scalar))
 	}
 }
 
@@ -46,74 +115,94 @@ const updateCanvasSize = () => {
 updateCanvasSize()
 window.addEventListener('resize', updateCanvasSize)
 
-/* ToolModes:
+/* Tool Modes:
 	0: pan
 	1: draw specific color
 	2: select
 */
 
-const zoomSens = 0.01
+const inf = 0.1
 var toolmode = 0
-var pTouchLocs = []
-var trans = new Trans(0.035)
-trans.stationary = false
+var pTouch = []
+var trans = new Matrix()
+var strans = new Matrix()
 
 setInterval(() => {
-	trans.update()
+	strans = strans.plus(trans.plus(strans.times(-1)).times(inf))
 
-	if(!trans.stationary) {
-		ctx.fillStyle = '#000'
-		ctx.fillRect(0, 0, canvas.width, canvas.height)
-	}
+	ctx.fillStyle = '#000'
+	ctx.fillRect(0, 0, canvas.width, canvas.height)
+
 	ctx.fillStyle = '#fff'
-	ctx.font = trans.mapz(30) + 'px VictorMono'
-	ctx.fillText('This is a demo of movement', trans.mapx(canvas.width/2), trans.mapy(canvas.height/2))
+
+	let v1 = trans.times(new Vector([100, 100, 1]))
+	let v2 = trans.times(new Vector([100, 300, 1]))
+
+	ctx.font = 20*trans.det() + 'px VictorMono'
+	ctx.fillText('This is a movement demo', v1.x(), v1.y())
+	ctx.fillText('Use 2 fingers to zoom', v2.x(), v2.y())
 }, 1)
 
 const recordTouches = (e) => {
 	for(let t = 0; t < e.targetTouches.length; t++) {
-		pTouchLocs[t] = {
-			x: e.targetTouches[t].screenX,
-			y: e.targetTouches[t].screenY,
-		}
+		pTouch[t] = new Vector([
+			e.targetTouches[t].pageX,
+			e.targetTouches[t].pageY,
+			1,
+		])
 	}
 }
 canvas.addEventListener('touchstart', recordTouches)
 canvas.addEventListener('touchmove', (e) => {
-	if(e.targetTouches.length == 1) switch(toolmode) {
-		case 0:
-			trans.rloc.x -= (e.targetTouches[0].screenX - pTouchLocs[0].x)
-			trans.rloc.y -= (e.targetTouches[0].screenY - pTouchLocs[0].y)
-			break
+	if(e.targetTouches.length == 1) {
+		let touch = new Vector([
+			e.targetTouches[0].pageX,
+			e.targetTouches[0].pageY,
+			1,
+		])
+		switch(toolmode) {
+			case 0:
+				trans = Matrix.translation(touch.plus(pTouch[0].times(-1))).times(trans)
+				break
+		}
 	} else {
-		avg = {
-			x: (e.targetTouches[0].screenX + e.targetTouches[1].screenX)/2,
-			y: (e.targetTouches[0].screenY + e.targetTouches[1].screenY)/2,
-		}
-		pAvg = {
-			x: (pTouchLocs[0].x + pTouchLocs[1].x)/2,
-			y: (pTouchLocs[0].y + pTouchLocs[1].y)/2,
-		}
-		zoomAmt = Math.hypot(
-			e.targetTouches[0].screenX - e.targetTouches[1].screenX,
-			e.targetTouches[0].screenY - e.targetTouches[1].screenY,
-		) - Math.hypot(
-			pTouchLocs[0].x - pTouchLocs[1].x,
-			pTouchLocs[0].y - pTouchLocs[1].y,
-		)
-
-		trans.rloc.x -= (avg.x - pAvg.x) +
-			Math.exp(trans.zoom) *
-			(avg.x - canvas.width/2) *
-			(1 - Math.exp(zoomSens * zoomAmt))
-		trans.rloc.y -= (avg.y - pAvg.y) +
-			Math.exp(trans.zoom) *
-			(avg.y - canvas.height/2) *
-			(1 - Math.exp(zoomSens * zoomAmt))
-		trans.rzoom += zoomSens * zoomAmt
+		let touch = [
+			new Vector([
+				e.targetTouches[0].pageX,
+				e.targetTouches[0].pageY,
+				1,
+			]),
+			new Vector([
+				e.targetTouches[1].pageX,
+				e.targetTouches[1].pageY,
+			1,
+			])
+		]
+		avg = touch[0].plus(touch[1]).times(0.5)
+		pAvg = pTouch[0].plus(pTouch[1]).times(0.5)
+		zoomAmt =
+			touch[0].plus(touch[1].times(-1)).mag() /
+			pTouch[0].plus(pTouch[1].times(-1)).mag()
+		isolate = Matrix.translation(avg)
+		translation = Matrix.translation(avg.plus(pAvg.times(-1)))
+		trans = translation
+			.times(isolate)
+			.times(Matrix.scale(zoomAmt))
+			.times(isolate.inv())
+			.times(trans)
 	}
 
 	recordTouches(e)
+})
+canvas.addEventListener('wheel', (e) => {
+	let touch = new Vector([
+		e.pageX,
+		e.pageY,
+		1,
+	])
+	zoomAmt = Math.exp(-e.deltaY/300)
+	translation = Matrix.translation(touch)
+	trans = translation.times(Matrix.scale(zoomAmt)).times(translation.inv()).times(trans)
 })
 
 document.getElementById('loading').remove()

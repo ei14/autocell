@@ -12,8 +12,13 @@
 		<center id='loading' style='line-height:calc(100vh - 3*var(--u))'>Loading...</center>
 		<canvas id='canvas'></canvas>
 		<div id='toolbar'>This toolbar doesn't do anything</div>
+		<script>
+			window.onerror = (e) => {
+				document.getElementById('toolbar').innerHTML = e.toString()
+			}
+		</script>
 		<script type='text/javascript' src='cordova.js'></script>
-		<script type='text/javascript' src='gpu-browser.min.js'></script>
+		<script type='text/javascript' src='gpu-browser.js'></script>
 		<script type='text/javascript' src='script.js'></script>
 	</body>
 </html>

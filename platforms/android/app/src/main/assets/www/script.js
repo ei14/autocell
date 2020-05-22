@@ -1,5 +1,4 @@
 const gpu = new GPU({mode: 'dev'});
-//const gpu = new GPU();
 
 const matAdd = gpu.createKernel(function(a, b) {
 	return a[this.thread.y][this.thread.x] + b[this.thread.y][this.thread.x]
@@ -34,7 +33,8 @@ const matVec = gpu.createKernel(function(m, v) {
 	return res
 }, {output: [3]})
 const vecSqu = gpu.createKernel(function(v) {
-	return a[this.thread.x] * a[this.thread.x]
+	if(this.thread.x == 2) return 0
+	return v[this.thread.x] * v[this.thread.x]
 }, {output: [3]})
 const vecAdd = gpu.createKernel(function(a, b) {
 	return a[this.thread.x] + b[this.thread.x]
@@ -126,6 +126,7 @@ var toolmode = 0
 var pTouch = []
 var trans = new Matrix()
 var strans = new Matrix()
+var acceptingTouches = true
 
 setInterval(() => {
 	strans = strans.plus(trans.plus(strans.times(-1)).times(inf))
@@ -135,10 +136,10 @@ setInterval(() => {
 
 	ctx.fillStyle = '#fff'
 
-	let v1 = trans.times(new Vector([100, 100, 1]))
-	let v2 = trans.times(new Vector([100, 300, 1]))
+	let v1 = strans.times(new Vector([100, 100, 1]))
+	let v2 = strans.times(new Vector([100, 300, 1]))
 
-	ctx.font = 20*trans.det() + 'px VictorMono'
+	ctx.font = 20*strans.det() + 'px VictorMono'
 	ctx.fillText('This is a movement demo', v1.x(), v1.y())
 	ctx.fillText('Use 2 fingers to zoom', v2.x(), v2.y())
 }, 1)
@@ -153,43 +154,49 @@ const recordTouches = (e) => {
 	}
 }
 canvas.addEventListener('touchstart', recordTouches)
+canvas.addEventListener('touchstart', (e) => {
+	acceptingTouches = true
+})
+canvas.addEventListener('touchend', (e) => {
+	if(e.targetTouches.length == 1) acceptingTouches = false
+})
 canvas.addEventListener('touchmove', (e) => {
-	if(e.targetTouches.length == 1) {
-		let touch = new Vector([
-			e.targetTouches[0].pageX,
-			e.targetTouches[0].pageY,
-			1,
-		])
-		switch(toolmode) {
-			case 0:
-				trans = Matrix.translation(touch.plus(pTouch[0].times(-1))).times(trans)
-				break
-		}
-	} else {
-		let touch = [
-			new Vector([
+	if(acceptingTouches) {
+		if(e.targetTouches.length == 1) {
+			let touch = new Vector([
 				e.targetTouches[0].pageX,
 				e.targetTouches[0].pageY,
 				1,
-			]),
-			new Vector([
-				e.targetTouches[1].pageX,
-				e.targetTouches[1].pageY,
-			1,
 			])
-		]
-		avg = touch[0].plus(touch[1]).times(0.5)
-		pAvg = pTouch[0].plus(pTouch[1]).times(0.5)
-		zoomAmt =
-			touch[0].plus(touch[1].times(-1)).mag() /
-			pTouch[0].plus(pTouch[1].times(-1)).mag()
-		isolate = Matrix.translation(avg)
-		translation = Matrix.translation(avg.plus(pAvg.times(-1)))
-		trans = translation
-			.times(isolate)
-			.times(Matrix.scale(zoomAmt))
-			.times(isolate.inv())
-			.times(trans)
+			switch(toolmode) {
+				case 0:
+					trans = Matrix.translation(touch.plus(pTouch[0].times(-1))).times(trans)
+					break
+			}
+		} else {
+			let touch = [
+				new Vector([
+					e.targetTouches[0].pageX,
+					e.targetTouches[0].pageY,
+					1,
+				]),
+				new Vector([
+					e.targetTouches[1].pageX,
+					e.targetTouches[1].pageY,
+					1,
+				])
+			]
+			let avg = touch[0].plus(touch[1]).times(0.5)
+			let pAvg = pTouch[0].plus(pTouch[1]).times(0.5)
+			let zoomAmt = touch[0].plus(touch[1].times(-1)).mag() / pTouch[0].plus(pTouch[1].times(-1)).mag()
+			let isolate = Matrix.translation(avg)
+			let translation = Matrix.translation(avg.plus(pAvg.times(-1)))
+			trans = translation
+				.times(isolate)
+				.times(Matrix.scale(zoomAmt))
+				.times(isolate.inv())
+				.times(trans)
+		}
 	}
 
 	recordTouches(e)
